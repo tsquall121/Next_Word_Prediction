@@ -5,4 +5,4 @@ Please allow a few seconds for the output to appear.
 In addition, you can use the slider to choose **up to three** next word predictions. The top three predictions of next words will show accordingly.
 # First Glance
 ![pic](https://github.com/tsquall121/Next_Word_Prediction/blob/main/APP_Overview.PNG)
-![pic](https://github.com/tsquall121/Next_Word_Prediction/blob/main/APP_Overview.PNG)
+![pic](https://github.com/tsquall121/Next_Word_Prediction/blob/main/APP_Usage.PNG)
