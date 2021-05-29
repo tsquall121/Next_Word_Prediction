@@ -4,4 +4,4 @@ You have to type **at least one** word in the **Enter Word(s)** box.
 Please allow a few seconds for the output to appear.
 In addition, you can use the slider to choose **up to three** next word predictions. The top three predictions of next words will show accordingly.
 # First Glance
-![pic]()
+![pic](https://github.com/tsquall121/Next_Word_Prediction/blob/main/APP_Overview.PNG)
