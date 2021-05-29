@@ -1,0 +1,553 @@
+---
+title: "Milestone Report"
+author: "Jie Tao"
+date: "10/10/2020"
+output:
+  html_document:
+    toc: yes
+    number_sections: yes
+    df_print: kable
+---
+
+# Milestone Report
+
+
+## Summary
+
+
+The goal of this project is to show the the exploratory analysis of the three text data sets, which are blog, twitter, and news data. By explaining the descriptive statistics and visualizing the data, this analysis builds the foundation for building prediction algorithm and Shiny app later on. The descriptive statistics and data visualization include unigram, bigrams, and trigrams.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(tidyverse)
+library(tidytext)
+library(stopwords)
+library(wordcloud)
+library(igraph)
+library(ggraph)
+library(ggthemes)
+library(SnowballC)
+library(topicmodels)
+theme_set(theme_light())
+```
+
+## Read Data
+
+
+The first step is to read all three data sets. Since the size of the data is huge, I decided to subset the data by random sampling.
+
+
+```{r}
+blog <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.blogs.txt", skip_empty_rows = TRUE)
+twitter <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.twitter.txt", skip_empty_rows = TRUE)
+news <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.news.txt", skip_empty_rows = TRUE)
+```
+
+
+
+## Sample Data
+
+
+I randomly sampled 0.5% of the lines in each data set.
+
+```{r}
+set.seed(456)
+blog <- sample(blog, size = length(blog)*0.005)
+twitter <- sample(twitter, size = length(twitter)*0.005)
+news <- sample(news, size = length(news)*0.005)
+```
+
+## Build Data Frames
+
+
+The sampled data sets were then combined into one dataframe.
+
+
+```{r}
+blog_df <- as_tibble(blog) %>% 
+    transmute(document = "blog", text = value)
+twitter_df <- as_tibble(twitter) %>% 
+    transmute(document = "twitter", text = value)
+news_df <- as_tibble(news) %>% 
+    transmute(document = "news", text = value)
+df <- bind_rows(blog_df, twitter_df, news_df)
+```
+
+
+## Exploratory Analysis of Unigrams
+
+### Tokenization
+The first strategy used the tokenize the text is by unigram (or single word). After tokenization, I further filtered out stopwords, all numbers, and "rt" stands for retweet.
+
+
+```{r}
+# tokenization
+unigrams <- df %>% 
+    unnest_tokens(word, text, token = "regex", pattern = "\\s+|[[:punct:]]+")
+
+# remove stop words
+tidy_unigrams <- unigrams %>% 
+  anti_join(get_stopwords(language = "en", source = "stopwords-iso")) %>% 
+  mutate(word = wordStem(word)) %>% 
+  filter(!str_detect(word, "\\W"),
+         !word %in% str_extract_all(word, "[:digit:]+"),
+         !word %in% str_extract_all(word, "rt")) 
+```
+
+
+### Word Cloud for Unigrams
+
+
+A word cloud was created to show the most frequently used words, the top 5 of which are "time", "day", "love", "people", and "life".
+
+
+```{r}
+# wordcloud unigrams
+tidy_unigrams %>% 
+    count(word) %>% 
+    with(wordcloud(word, n, max.words = 50, colors = "skyblue"))
+```
+
+
+### Barplot of Unigram Fequency by Type
+
+Then, I grouped the data by their sources and plotted three bar charts, which show that some words were used frequently across different sources such as "time", "people", and "day"; whereas other words are relatively unique to each source such as "follow" for words from tweets and "game" for news data.
+
+
+```{r}
+# frequency of unigrams by type
+tidy_unigrams %>%
+    group_by(document) %>% 
+    count(word, sort = TRUE) %>% 
+    slice_max(n, n = 10, with_ties = FALSE) %>% 
+    ungroup() %>% 
+    mutate(word = reorder_within(word, n, document)) %>% 
+    ggplot(aes(word, n, fill = document)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~document, nrow = 2, scales = "free") +
+    xlab(NULL) +
+    coord_flip()
+
+```
+
+### Barplot of Unigrams tf-idf by Type
+
+
+```{r}
+# count unigrams
+document_unigrams <- tidy_unigrams %>% 
+  count(document, word, sort = TRUE)
+
+# unigrams tf-idf
+unigrams_tf_idf <- document_unigrams %>% 
+  bind_tf_idf(word, document, n) %>% 
+  mutate(word = fct_reorder(word, tf_idf)) %>% 
+  mutate(document = factor(document, levels = c("blog", "news", "twitter")))
+
+unigrams_tf_idf %>% 
+  group_by(document) %>% 
+  slice_max(tf_idf, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(word = reorder_within(word, tf_idf, document)) %>% 
+  ggplot(aes(word, tf_idf, fill = document)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~document, ncol = 2, scales = "free") +
+  coord_flip()
+
+mystopwords <- tibble(word = c("fuck", "shit", "suck", "lol", "haha","lmao", 
+                               "nigga", "ppl","thx", "ya", "ur", "wanna", 
+                               "retweet", "ass", "cuz", "hahaha", "bitch", "fb",
+                               "ha", "damn", "omg", "ima", "yall", "idk", "nite",
+                               "xd", "yo", "xoxo", "hahah", "asap", "yai", "wat",
+                               "unfollow", "imma", "fuckin", "ugh", "xo", "soo",
+                               "plz", "msg", "hahahaha", "fam", "biz", "tix"))
+
+unigrams_tf_idf <- anti_join(unigrams_tf_idf, mystopwords, by = "word")
+
+unigrams_tf_idf %>%
+  group_by(document) %>% 
+  slice_max(tf_idf, n = 15, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(word = reorder_within(word, tf_idf, document)) %>% 
+  ggplot(aes(word, tf_idf, fill = document)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~document, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+
+## Exploratory Analysis of Bigrams
+
+### Tokenization
+The second approach to tokenize data is to construct bigrams (i.e., two consecutive words).
+
+
+```{r}
+# tokenization
+tidy_bigrams <- df %>% 
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>% 
+    separate(col = bigram, into = c("word1", "word2"), sep = " ") %>% 
+    filter(!word1 %in% stopwords(source = "stopwords-iso"),
+           !word1 %in% str_extract_all(word1, "[:digit:]+"),
+           !word1 %in% str_extract_all(word1, "rt"),
+           !word2 %in% stopwords(source = "stopwords-iso"),
+           !word2 %in% str_extract_all(word2, "[:digit:]+"),
+           !word2 %in% str_extract_all(word2, "rt")) %>% 
+    unite(bigram, word1, word2, sep = " ")
+```
+
+
+### Word Cloud for Bigrams
+
+As shown in the word cloud, the three most frequently used bigrams are "happy birthday", "los angeles", and "san francisco".
+
+
+```{r}
+# wordcloud bigrams
+tidy_bigrams %>% 
+    count(bigram) %>% 
+    with(wordcloud(bigram, n, max.words = 30, colors = "lightblue"))
+```
+
+
+### Bigrams Network
+
+The bigrams network shows the relationships among two consecutive words in terms of their direction and frequency. For example, the bigram "los angeles" starts from "los" and ends at "angeles" and the frequency is relatively high due to darker color.
+
+
+```{r}
+# bigrams network
+bigram_graph <- tidy_bigrams %>% 
+    separate(col = bigram, into = c("word1", "word2"), sep = " ") %>% 
+    count(word1, word2) %>% 
+    filter(n > 10) %>% 
+    graph_from_data_frame() 
+
+set.seed(2016)
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(bigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+
+### Barplot for Frequency of Bigrams by Type
+
+The barplot further breaks the data into groups and displays that "ice cream", "los angeles", and "happy birthday" are the most mentioned words in blog, news, and twitter data sets respectively. 
+
+```{r}
+# frequency of bigrams by type
+tidy_bigrams %>%
+    group_by(document) %>% 
+    count(bigram, sort = TRUE) %>% 
+    slice_max(n, n = 10, with_ties = FALSE) %>% 
+    ungroup() %>% 
+    mutate(bigram = reorder_within(bigram, n, document)) %>% 
+    ggplot(aes(bigram, n, fill = document)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~document, scales = "free", nrow = 2)+
+    xlab(NULL)+
+    coord_flip()
+```
+
+### Barplot of Bigrams tf-idf by Type
+
+
+```{r}
+# count bigrams
+document_bigrams <- tidy_bigrams %>% 
+  count(document, bigram, sort = TRUE)
+
+# bigrams tf-idf
+bigrams_tf_idf <- document_bigrams %>% 
+  bind_tf_idf(bigram, document, n) %>% 
+  mutate(bigram = fct_reorder(bigram, tf_idf)) %>% 
+  mutate(document = factor(document, levels = c("blog", "news", "twitter")))
+
+bigrams_tf_idf %>% 
+  group_by(document) %>% 
+  slice_max(tf_idf, n = 10, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(bigram = reorder_within(bigram, tf_idf, document)) %>% 
+  ggplot(aes(bigram, tf_idf, fill = document)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~document, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+
+## Exploratory Analysis of Trigrams
+
+
+### Tokenization
+
+Trigram is the last method used to tokenize. 
+
+
+```{r}
+tidy_trigrams <- df %>% 
+    unnest_tokens(trigram, text, token = "ngrams", n = 3) %>% 
+    separate(col = trigram, into = c("word1", "word2", "word3"), sep = " ") %>% 
+    filter(!word1 %in% stopwords(source = "stopwords-iso"),
+           !word1 %in% str_extract_all(word1, "[:digit:]+"),
+           !word1 %in% str_extract_all(word1, "rt"),
+           !word2 %in% stopwords(source = "stopwords-iso"),
+           !word2 %in% str_extract_all(word2, "[:digit:]+"),
+           !word2 %in% str_extract_all(word2, "rt"),
+           !word3 %in% stopwords(source = "stopwords-iso"),
+           !word3 %in% str_extract_all(word3, "[:digit:]+"),
+           !word3 %in% str_extract_all(word3, "rt")) %>% 
+    unite(trigram, word1, word2, word3, sep = " ")
+```
+
+### Word Cloud for Trigrams
+
+The top three most used trigrams are "happy mothers day", "happy mother's day", and "president barack obama".
+
+```{r}
+# wordcloud trigrams
+tidy_trigrams %>% 
+    count(trigram) %>% 
+    with(wordcloud(trigram, n, max.words = 30, colors = "lightblue"))
+```
+
+
+### Trigrams Network
+
+It is clear in the chart that there are two major networks clustered around "happy" and "president".
+
+
+```{r}
+# trigrams network
+trigram_graph <- tidy_trigrams %>% 
+     separate(col = trigram, into = c("word1", "word2", "word3"), sep = " ") %>% 
+     count(word1, word2, word3) %>% 
+     filter(n > 2) %>% 
+     graph_from_data_frame() 
+  
+
+set.seed(678)
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(trigram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+
+### Barplot for Frequency of Trigrams by Type
+
+The most frequent words in the barplot by their sources are "hotel venice italy", "president barack obama", and "happy mothers day".
+
+
+```{r}
+# frequency of trigrams by type
+tidy_trigrams %>%
+    group_by(document) %>% 
+    count(trigram, sort = TRUE) %>% 
+    slice_max(n, n = 10, with_ties = FALSE) %>% 
+    ungroup() %>% 
+    mutate(trigram = reorder_within(trigram, n, document)) %>% 
+    ggplot(aes(trigram, n, fill = document)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~document, scales = "free", nrow = 2)+
+    xlab(NULL)+
+    coord_flip()
+```
+
+### Barplot of Trigrams tf-idf by Type
+
+
+```{r}
+# count bigrams
+document_trigrams <- tidy_trigrams %>% 
+  count(document, trigram, sort = TRUE)
+
+# bigrams tf-idf
+trigrams_tf_idf <- document_trigrams %>% 
+  bind_tf_idf(trigram, document, n) %>% 
+  mutate(trigram = fct_reorder(trigram, tf_idf)) %>% 
+  mutate(document = factor(document, levels = c("blog", "news", "twitter")))
+
+trigrams_tf_idf %>% 
+  group_by(document) %>% 
+  slice_max(tf_idf, n = 10, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(trigram = reorder_within(trigram, tf_idf, document)) %>% 
+  ggplot(aes(trigram, tf_idf, fill = document)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~document, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+## Conlusion
+
+It it clear that the different tokenization methods generate varied sets of frequently used words. Thus, building the prediction algorithm based on either bigram or trigram is the first important decision to make.
+
+## Exploratory Analysis of Quadgrams
+
+
+### Tokenization
+
+Quadgrams is the last method used to tokenize. 
+
+
+```{r}
+tidy_quadgrams <- df %>% 
+    unnest_tokens(quadgram, text, token = "ngrams", n = 4) %>% 
+    separate(col = quadgram, into = c("word1", "word2", 
+                                     "word3", "word4"), sep = " ") %>% 
+    filter(!word1 %in% stopwords(source = "stopwords-iso"),
+           !word1 %in% str_extract_all(word1, "[:digit:]+"),
+           !word1 %in% str_extract_all(word1, "rt"),
+           !word2 %in% stopwords(source = "stopwords-iso"),
+           !word2 %in% str_extract_all(word2, "[:digit:]+"),
+           !word2 %in% str_extract_all(word2, "rt"),
+           !word3 %in% stopwords(source = "stopwords-iso"),
+           !word3 %in% str_extract_all(word3, "[:digit:]+"),
+           !word3 %in% str_extract_all(word3, "rt"),
+           !word4 %in% stopwords(source = "stopwords-iso"),
+           !word4 %in% str_extract_all(word4, "[:digit:]+"),
+           !word4 %in% str_extract_all(word4, "rt")) %>% 
+    unite(quadgram, word1, word2, word3, word4, sep = " ")
+```
+
+
+### Quadgrams Network
+
+It is clear in the chart that there are two major networks clustered around "happy" and "president".
+
+
+```{r}
+# quadgrams network
+quadgram_graph <- tidy_quadgrams %>% 
+     separate(col = quadgram, into = c("word1", "word2", 
+                                       "word3", "word4"), sep = " ") %>% 
+     count(word1, word2, word3, word4) %>% 
+     filter(n > 2) %>% 
+     graph_from_data_frame() 
+  
+
+set.seed(678)
+
+a <- grid::arrow(type = "closed", length = unit(.15, "inches"))
+
+ggraph(quadgram_graph, layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n), show.legend = FALSE,
+                 arrow = a, end_cap = circle(.07, 'inches')) +
+  geom_node_point(color = "lightblue", size = 5) +
+  geom_node_text(aes(label = name), vjust = 1, hjust = 1) +
+  theme_void()
+```
+
+
+### Barplot for Frequency of  Quadgrams by Type
+
+The most frequent words in the barplot by their sources are "hotel venice italy", "president barack obama", and "happy mothers day".
+
+
+```{r}
+# frequency of trigrams by type
+tidy_quadgrams %>%
+    group_by(document) %>% 
+    count(quadgram, sort = TRUE) %>% 
+    slice_max(n, n = 10, with_ties = FALSE) %>% 
+    ungroup() %>% 
+    mutate(quadgram = reorder_within(quadgram, n, document)) %>% 
+    ggplot(aes(quadgram, n, fill = document)) +
+    geom_col(show.legend = FALSE) +
+    facet_wrap(~document, scales = "free", nrow = 2)+
+    xlab(NULL)+
+    coord_flip()
+```
+
+### Barplot of Quadgrams tf-idf by Type
+
+
+```{r}
+# count quadgrams
+document_quadgrams <- tidy_quadgrams %>% 
+  count(document, quadgram, sort = TRUE)
+
+# quadrams tf-idf
+quadgrams_tf_idf <- document_quadgrams %>% 
+  bind_tf_idf(quadgram, document, n) %>% 
+  mutate(quadgram = fct_reorder(quadgram, tf_idf)) %>% 
+  mutate(document = factor(document, levels = c("blog", "news", "twitter")))
+
+quadgrams_tf_idf %>% 
+  group_by(document) %>% 
+  slice_max(tf_idf, n = 10, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(quadgram = reorder_within(quadgram, tf_idf, document)) %>% 
+  ggplot(aes(quadgram, tf_idf, fill = document)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~document, ncol = 2, scales = "free") +
+  coord_flip()
+```
+
+
+## Topic Modeling
+
+### Word-Topic Probabilities
+
+```{r}
+# tokenization
+unigrams <- df %>% 
+    unnest_tokens(word, text, token = "regex", pattern = "\\s+|[[:punct:]]+")
+
+# remove stop words
+tidy_unigrams <- unigrams %>% 
+  anti_join(get_stopwords(language = "en", source = "stopwords-iso")) %>% 
+  mutate(word = wordStem(word)) %>% 
+  filter(!str_detect(word, "\\W"),
+         !word %in% str_extract_all(word, "[:digit:]+"),
+         !word %in% str_extract_all(word, "rt")) %>% 
+  count(document, word, sort = TRUE) %>% 
+  ungroup()
+```
+
+
+```{r}
+# document-term matrix
+unigrams_dtm <- tidy_unigrams %>% 
+  cast_dtm(document, word, n)
+
+# latent dirichlet allocation: four-topic model
+unigrams_lda <- LDA(unigrams_dtm, k = 3, control = list(seed = 1234))
+
+# tidy topic model
+tidy_unigrams_lda <- tidy(unigrams_lda, matrix = "beta")
+
+# top terms in each topic
+tidy_unigrams_lda %>% 
+  group_by(topic) %>% 
+  slice_max(beta, n = 10, with_ties = FALSE) %>% 
+  ungroup() %>% 
+  mutate(term = reorder_within(term, beta, topic)) %>% 
+  ggplot(aes(term, beta, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  coord_flip() +
+  scale_x_reordered()
+          
+```
+
+
+
+

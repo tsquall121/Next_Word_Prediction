@@ -1,0 +1,239 @@
+---
+title: "Data Cleaning"
+author: "Jie Tao"
+date: "10/16/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(tidytext)
+library(tidymodels)
+library(stopwords)
+library(SnowballC)
+library(stringi)
+theme_set(theme_light())
+```
+
+## Read Data
+
+```{r}
+blog <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.blogs.txt", skip_empty_rows = TRUE)
+twitter <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.twitter.txt", skip_empty_rows = TRUE)
+news <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/final/en_US/en_US.news.txt", skip_empty_rows = TRUE)
+profanity1 <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/profanity.txt", skip_empty_rows = TRUE) 
+profanity2 <- read_lines(file = "E:/Data Science Specialization/Data Science Capstone/google_list_profanity.txt", skip_empty_rows = TRUE)
+```
+
+## Sample Data
+
+```{r}
+set.seed(456)
+blog <- sample(blog, size = length(blog)*0.01)
+twitter <- sample(twitter, size = length(twitter)*0.01)
+news <- sample(news, size = length(news)*0.01)
+```
+
+## Build Data Frames
+
+```{r}
+blog_df <- as_tibble(blog) %>% 
+    transmute(document = "blog", text = value)
+twitter_df <- as_tibble(twitter) %>% 
+    transmute(document = "twitter", text = value)
+news_df <- as_tibble(news) %>% 
+    transmute(document = "news", text = value)
+df <- bind_rows(blog_df, twitter_df, news_df)
+# remove foreign word
+df <- df %>% 
+  mutate(text = iconv(text, from = "latin1", to = "ASCII", sub = ""))
+profanity_df <- bind_rows(as_tibble(profanity1), as_tibble(profanity2)) 
+profanity_df <- profanity_df %>% 
+    distinct(value) %>% 
+    rename(word = value)
+
+# remove unused objects
+rm(blog_df, news_df, twitter_df, blog, news, profanity1, profanity2, twitter)
+```
+
+## Unigrams
+
+```{r}
+# tokenization
+unigrams <- df %>% 
+    unnest_tokens(word, text, token = "words")
+
+# clean tokens
+tidy_unigrams <- unigrams %>% 
+  anti_join(profanity_df, by = "word") %>% # remove profanity 
+  filter(!str_detect(word, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word = str_remove_all(word, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word, "\\d")) %>% # filter out numbers
+  count(word, sort = TRUE)
+
+start_word_prediction <- tidy_unigrams$word[1:3]
+saveRDS(start_word_prediction, file = "E:/Data Science Specialization/Data Science Capstone/shinyAPP/startwordprediction.RData")
+rm(unigrams)
+```
+
+
+## Bigrams
+
+```{r}
+# tokenization
+bigrams <- df %>% 
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) %>% 
+    separate(col = bigram, into = c("word1", "word2"), sep = " ")
+
+# clean tokens
+tidy_bigrams <- bigrams %>% 
+  anti_join(profanity_df, by = c("word1" = "word")) %>% # remove profanity
+  anti_join(profanity_df, by = c("word2" = "word")) %>% 
+  filter(!str_detect(word1, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word1, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word1, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word1, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word1, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word1 = str_remove_all(word1, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word1, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word2, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word2, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word2, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word2, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word2, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word2 = str_remove_all(word2, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word2, "\\d")) %>% # filter out numbers
+  unite(bigram, word1, word2, sep = " ") %>% 
+  count(bigram, sort = TRUE)
+
+tidy_bigrams <- tidy_bigrams %>% 
+  separate(col = bigram, into = c("variable", "outcome"), sep = " ",
+           remove = FALSE)
+
+saveRDS(tidy_bigrams, file = "E:/Data Science Specialization/Data Science Capstone/shinyAPP/bigram.RData")
+
+rm(bigrams)
+```
+
+## Trigrams
+
+```{r}
+# tokenization
+trigrams <- df %>% 
+    unnest_tokens(trigram, text, token = "ngrams", n = 3) %>% 
+    separate(col = trigram, into = c("word1", "word2", "word3"), sep = " ")
+
+# clean tokens
+tidy_trigrams <- trigrams %>% 
+  anti_join(profanity_df, by = c("word1" = "word")) %>% # remove profanity
+  anti_join(profanity_df, by = c("word2" = "word")) %>% 
+  anti_join(profanity_df, by = c("word3" = "word")) %>% 
+  filter(!str_detect(word1, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word1, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word1, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word1, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word1, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word1 = str_remove_all(word1, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word1, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word2, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word2, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word2, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word2, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word2, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word2 = str_remove_all(word2, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word2, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word3, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word3, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word3, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word3, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word3, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word3 = str_remove_all(word3, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word3, "\\d")) %>% # filter out numbers
+  unite(trigram, word1, word2, word3, sep = " ") %>% 
+  count(trigram, sort = TRUE)
+
+tidy_trigrams <- tidy_trigrams %>%
+  separate(col = trigram, into = c("word1", "word2", "outcome"), sep = " ") %>% 
+  unite(col = variable, word1, word2, sep = " ")
+
+saveRDS(tidy_trigrams, file = "E:/Data Science Specialization/Data Science Capstone/shinyAPP/trigram.RData")
+
+rm(trigrams)
+```
+
+## Quadgrams
+
+```{r}
+# tokenization
+quadgrams <- df %>% 
+    unnest_tokens(quadgram, text, token = "ngrams", n = 4) %>% 
+    separate(col = quadgram, into = c("word1", "word2", 
+                                     "word3", "word4"), sep = " ")
+
+# clean tokens
+tidy_quadgrams <- quadgrams %>% 
+  anti_join(profanity_df, by = c("word1" = "word")) %>% # remove profanity
+  anti_join(profanity_df, by = c("word2" = "word")) %>% 
+  anti_join(profanity_df, by = c("word3" = "word")) %>% 
+  anti_join(profanity_df, by = c("word4" = "word")) %>% 
+  filter(!str_detect(word1, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word1, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word1, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word1, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word1, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word1 = str_remove_all(word1, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word1, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word2, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word2, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word2, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word2, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word2, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word2 = str_remove_all(word2, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word2, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word3, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word3, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word3, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word3, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word3, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word3 = str_remove_all(word3, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word3, "\\d")) %>% # filter out numbers
+  filter(!str_detect(word4, ".*fuck.*|.*shit.*|.*asshol?.*|puss.*|.*douche.*")) %>% 
+  filter(!str_detect(word4, "^http(s:)*|^www+\\.")) %>% # filter out websites 
+  filter(!str_detect(word4, ".*\\.c.*|\\.org| 
+                     \\.edu|\\.gov|\\.net|\\.web|\\.html*|\\.in.*")) %>% 
+  filter(!str_detect(word4, "_+|:+")) %>% # filter out "_" and ":"
+  filter(!str_detect(word4, "retweet.*|^rt")) %>% # filter out "retweet"&"rt"
+  mutate(word4 = str_remove_all(word4, ",|\\.")) %>% # remove "," and "."
+  filter(!str_detect(word4, "\\d")) %>% # filter out numbers
+  unite(quadgram, word1, word2, word3, word4, sep = " ") %>% 
+  count(quadgram, sort = TRUE)
+
+tidy_quadgrams <- tidy_quadgrams %>%
+  separate(col = quadgram, into = c("word1", "word2", "word3", "outcome"),
+           sep = " ") %>% 
+  unite(col = variable, word1, word2, word3, sep = " ")
+
+saveRDS(tidy_quadgrams, file = "E:/Data Science Specialization/Data Science Capstone/shinyAPP/quadgram.RData")
+
+
+rm(quadgrams)
+
+```
+
+
+
+
